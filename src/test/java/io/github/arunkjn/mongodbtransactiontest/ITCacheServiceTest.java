@@ -19,24 +19,29 @@ import java.util.concurrent.CountDownLatch;
 
 public class ITCacheServiceTest {
 
-  private MongoClient client, client2;
-  private MongoDatabase database, database2;
+  private MongoClient client;
+  private MongoDatabase database;
+  private MongoCollection<Person> collection;
 
   @BeforeClass
   public void setup() throws IOException {
     client = MongoClients.create("mongodb://localhost:12000");
 
-    client2 = MongoClients.create("mongodb://localhost:12000");
-
     database = client.getDatabase("test");
 
-    database2 = client2.getDatabase("test");
+    collection = database.getCollection("person", Person.class)
+            .withCodecRegistry(CodecRegistries.fromRegistries(
+                    MongoClientSettings.getDefaultCodecRegistry(),
+                    CodecRegistries.fromProviders(
+                            PojoCodecProvider.builder().automatic(true).build()
+                    )
+            ));
+
   }
 
   @AfterClass
   public void teardown() throws IOException {
     client.close();
-    client2.close();
   }
 
   @Test(groups = {"integration"})
@@ -47,15 +52,6 @@ public class ITCacheServiceTest {
 
     Person person1 = new Person("arun", 23);
     Person person2 = new Person("tarun", 25);
-
-
-    MongoCollection<Person> collection = database.getCollection("transactionDatabaseCache_CACHE", Person.class)
-            .withCodecRegistry(CodecRegistries.fromRegistries(
-                    MongoClientSettings.getDefaultCodecRegistry(),
-                    CodecRegistries.fromProviders(
-                            PojoCodecProvider.builder().automatic(true).build()
-                    )
-            ));
 
     // creating a document in collection outside transaction
     collection.insertOne(person1);
