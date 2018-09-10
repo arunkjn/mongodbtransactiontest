@@ -8,7 +8,6 @@ import com.mongodb.client.*;
 import com.mongodb.client.model.Filters;
 import org.bson.codecs.configuration.CodecRegistries;
 import org.bson.codecs.pojo.PojoCodecProvider;
-import org.slf4j.LoggerFactory;
 import org.testng.Assert;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
@@ -49,6 +48,7 @@ public class ITCacheServiceTest {
 
     CountDownLatch latch1 = new CountDownLatch(1);
     CountDownLatch latch2 = new CountDownLatch(1);
+    CountDownLatch latch3 = new CountDownLatch(1);
 
     Person person1 = new Person("arun", 23);
     Person person2 = new Person("tarun", 25);
@@ -61,7 +61,7 @@ public class ITCacheServiceTest {
       ClientSession session = client.startSession();
       session.startTransaction(TransactionOptions.builder().readConcern(ReadConcern.SNAPSHOT).writeConcern(WriteConcern.MAJORITY).build());
 
-      collection.replaceOne(Filters.eq("name", "arun"), person2);
+      collection.replaceOne(session, Filters.eq("name", "arun"), person2);
 
       // waiting for parent thread to read dirty value in middle of transaction before commiting
       latch2.countDown();
@@ -73,6 +73,7 @@ public class ITCacheServiceTest {
       }
 
       session.commitTransaction();
+      latch3.countDown();
     }).start();
 
     // waiting for transaction to replace the document with another one, but not commit
@@ -85,6 +86,8 @@ public class ITCacheServiceTest {
 
     // proceeding with transaction completion
     latch1.countDown();
+
+    latch3.await();
     Person personx = collection.find(Filters.eq("name", "arun")).first();
     Assert.assertTrue(personx == null);
     Person persony = collection.find(Filters.eq("name", "tarun")).first();
