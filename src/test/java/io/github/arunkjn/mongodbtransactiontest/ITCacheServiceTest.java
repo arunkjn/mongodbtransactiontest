@@ -20,7 +20,7 @@ public class ITCacheServiceTest {
 
   private MongoClient client;
   private MongoDatabase database;
-  private MongoCollection<Person> collection;
+  private MongoCollection<Person> collection, collection1;
 
   @BeforeClass
   public void setup() throws IOException {
@@ -36,6 +36,13 @@ public class ITCacheServiceTest {
                     )
             ));
 
+    collection1 = database.getCollection("person_second", Person.class)
+            .withCodecRegistry(CodecRegistries.fromRegistries(
+                    MongoClientSettings.getDefaultCodecRegistry(),
+                    CodecRegistries.fromProviders(
+                            PojoCodecProvider.builder().automatic(true).build()
+                    )
+            ));
   }
 
   @AfterClass
@@ -93,5 +100,56 @@ public class ITCacheServiceTest {
     Person persony = collection.find(Filters.eq("name", "tarun")).first();
     Assert.assertTrue(persony != null);
     Assert.assertTrue(persony.equals(person2));
+  }
+
+
+  @Test(groups = {"integration"})
+  public void staleReadInsideTransaction() throws Exception {
+
+    CountDownLatch latch1 = new CountDownLatch(1);
+    CountDownLatch latch2 = new CountDownLatch(1);
+    CountDownLatch latch3 = new CountDownLatch(1);
+
+    Person person1 = new Person("arun", 23);
+
+    // creating a document in collection outside transaction
+    collection1.insertOne(person1);
+
+    // starting a transaction in new thread
+    new Thread(() -> {
+      ClientSession session = client.startSession();
+      session.startTransaction(TransactionOptions.builder().readConcern(ReadConcern.SNAPSHOT).writeConcern(WriteConcern.MAJORITY).build());
+
+      /**
+       * reading a document and creating a new document using first document.
+       * This is a causal relationship.
+       * If this value is modified from outside while the transaction is running,
+       * we expect some sort of error while commiting the transaction
+       */
+      Person person = collection1.find(session, Filters.eq("name", "arun")).first();
+      latch2.countDown();
+      try {
+        latch1.await();
+      } catch (InterruptedException e) {
+        e.printStackTrace();
+      }
+      Person person3 = new Person("tarun", person.getAge() +10);
+      collection1.insertOne(session, person3);
+
+      session.commitTransaction();
+      latch3.countDown();
+    }).start();
+
+    latch2.await();
+    Person person = collection1.find(Filters.eq("name", "arun")).first();
+    person.setAge(30);
+    collection1.replaceOne(Filters.eq("name", "arun"), person);
+    latch1.countDown();
+
+    Person person2 = collection1.find(Filters.eq("name", "tarun")).first();
+    Assert.assertTrue(person2 != null);
+    System.out.println(person2.toString());
+    Assert.assertTrue(person2.getAge().equals(40));
+
   }
 }
